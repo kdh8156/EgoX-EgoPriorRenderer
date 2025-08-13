@@ -52,7 +52,7 @@ class DPTHeadTemporal(DPTHead):
             ]
         )
 
-    def forward(self, out_features, patch_h, patch_w, frame_length):
+    def forward(self, out_features, patch_h, patch_w, frame_length, micro_batch_size=4):
         out = []
         for i, x in enumerate(out_features):
             if self.use_clstoken:
@@ -62,11 +62,7 @@ class DPTHeadTemporal(DPTHead):
             else:
                 x = x[0]
 
-            x = (
-                x.permute(0, 2, 1)
-                .reshape((x.shape[0], x.shape[-1], patch_h, patch_w))
-                .contiguous()
-            )
+            x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w)).contiguous()
 
             B, T = x.shape[0] // frame_length, frame_length
             x = self.projects[i](x)
@@ -114,16 +110,34 @@ class DPTHeadTemporal(DPTHead):
             .permute(0, 2, 1, 3, 4)
             .flatten(0, 1)
         )
-        path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
-        path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
 
-        out = self.scratch.output_conv1(path_1)
-        out = F.interpolate(
-            out,
-            (int(patch_h * 14), int(patch_w * 14)),
-            mode="bilinear",
-            align_corners=True,
-        )
-        out = self.scratch.output_conv2(out)
+        batch_size = layer_1_rn.shape[0]
+        if batch_size <= micro_batch_size or batch_size % micro_batch_size != 0:
+            path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
+            path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
 
-        return out
+            out = self.scratch.output_conv1(path_1)
+            out = F.interpolate(
+                out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True
+            )
+            ori_type = out.dtype
+            with torch.autocast(device_type="cuda", enabled=False):
+                out = self.scratch.output_conv2(out.float())
+
+            output = out.to(ori_type) 
+        else:
+            ret = []
+            for i in range(0, batch_size, micro_batch_size):
+                path_2 = self.scratch.refinenet2(path_3[i:i + micro_batch_size], layer_2_rn[i:i + micro_batch_size], size=layer_1_rn[i:i + micro_batch_size].shape[2:])
+                path_1 = self.scratch.refinenet1(path_2, layer_1_rn[i:i + micro_batch_size])
+                out = self.scratch.output_conv1(path_1)
+                out = F.interpolate(
+                    out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True
+                )
+                ori_type = out.dtype
+                with torch.autocast(device_type="cuda", enabled=False):
+                    out = self.scratch.output_conv2(out.float())
+                ret.append(out.to(ori_type))
+            output = torch.cat(ret, dim=0)
+        
+        return output
