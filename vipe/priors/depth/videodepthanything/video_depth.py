@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from torchvision.transforms import Compose
 from tqdm import tqdm
 
@@ -27,6 +28,7 @@ from vipe.priors.depth.dav2.util.transform import NormalizeImage, PrepareForNet,
 
 from .dpt_temporal import DPTHeadTemporal
 from .util import compute_scale_and_shift, get_interpolate_frames
+
 
 # infer settings, do not change
 INFER_LEN = 32
@@ -77,13 +79,11 @@ class VideoDepthAnything(nn.Module):
         return depth.squeeze(1).unflatten(0, (B, T))  # return shape [B, T, H, W]
 
     def infer_video_depth(
-        self, frame_list: list[np.ndarray], input_size: int = 518, device="cuda"
+        self, frame_list: list[np.ndarray], input_size: int = 518, device="cuda", fp32=True
     ) -> np.ndarray:
         frame_height, frame_width = frame_list[0].shape[:2]
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
-        if (
-            ratio > 1.78
-        ):  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
+        if ratio > 1.78:  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
             input_size = int(input_size * 1.777 / ratio)
             input_size = round(input_size / 14) * 14
 
@@ -105,9 +105,7 @@ class VideoDepthAnything(nn.Module):
 
         frame_step = INFER_LEN - OVERLAP
         org_video_len = len(frame_list)
-        append_frame_len = (frame_step - (org_video_len % frame_step)) % frame_step + (
-            INFER_LEN - frame_step
-        )
+        append_frame_len = (frame_step - (org_video_len % frame_step)) % frame_step + (INFER_LEN - frame_step)
         frame_list = frame_list + [frame_list[-1].copy()] * append_frame_len
 
         depth_list = []
@@ -117,11 +115,7 @@ class VideoDepthAnything(nn.Module):
             for i in range(INFER_LEN):
                 # cur_list.append(torch.from_numpy(transform({'image': frame_list[frame_id+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
                 cur_list.append(
-                    torch.from_numpy(
-                        transform(
-                            {"image": frame_list[frame_id + i].astype(np.float32)}
-                        )["image"]
-                    )
+                    torch.from_numpy(transform({"image": frame_list[frame_id + i].astype(np.float32)})["image"])
                     .unsqueeze(0)
                     .unsqueeze(0)
                 )
@@ -130,7 +124,8 @@ class VideoDepthAnything(nn.Module):
                 cur_input[:, :OVERLAP, ...] = pre_input[:, KEYFRAMES, ...]
 
             with torch.no_grad():
-                depth = self.forward(cur_input)  # depth shape: [1, T, H, W]
+                with torch.autocast(device_type=device, enabled=(not fp32)):
+                    depth = self.forward(cur_input)  # depth shape: [1, T, H, W]
 
             depth = F.interpolate(
                 depth.flatten(0, 1).unsqueeze(1),
@@ -171,9 +166,7 @@ class VideoDepthAnything(nn.Module):
                 for i in range(len(post_depth_list)):
                     post_depth_list[i] = post_depth_list[i] * scale + shift
                     post_depth_list[i][post_depth_list[i] < 0] = 0
-                depth_list_aligned[-INTERP_LEN:] = get_interpolate_frames(
-                    pre_depth_list, post_depth_list
-                )
+                depth_list_aligned[-INTERP_LEN:] = get_interpolate_frames(pre_depth_list, post_depth_list)
 
                 for i in range(OVERLAP, INFER_LEN):
                     new_depth = depth_list[frame_id + i] * scale + shift
