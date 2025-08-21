@@ -69,6 +69,14 @@ python run.py pipeline=default streams=raw_mp4_stream streams.base_path=YOUR_VID
 python run.py pipeline=default streams=raw_mp4_stream streams.base_path=YOUR_VIDEO_OR_DIR_PATH pipeline.post.depth_align_model=null
 ```
 
+### Converting to COLMAP format
+
+You can use the following script to convert the ViPE results to COLMAP format. For example:
+```bash
+python scripts/vipe_to_colmap.py vipe_results/ --sequence dog_example
+```
+This will unproject the dense depth maps to create the 3D point cloud. 
+Alternatively for a more lightweight and 3D consistent point cloud, you can add the `--use_slam_map` flag to the above command. This requires you to run the full pipeline with `pipeline.output.save_slam_map=true` to save the additional information.
 
 ## Acknowledgments
 
