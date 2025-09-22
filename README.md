@@ -78,7 +78,7 @@ Each experiment directory contains multiple output subdirectories with different
 ### Common Issues and Solutions
 
 **Issue**: `ValueError: No valid camera ID found in directory`
-- **Solution**: Ensure your inference results contain properly formatted camera data, or specify the camera ID explicitly using `--cam_id`
+- **Solution**: Ensure your inference results contain properly formatted camera data
 
 **Issue**: `Frame range [X, Y] exceeds available inference results [START_FRAME, END_FRAME]`
 - **Solution**: Check the available frame range in your inference results (which corresponds to the start_frame and end_frame used during inference) and adjust `--start_frame` and `--end_frame` accordingly
