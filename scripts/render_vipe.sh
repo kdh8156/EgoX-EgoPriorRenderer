@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 사용 가능한 GPU 디바이스 설정 (,로 구분)
-AVAILABLE_GPUS="4"  # 사용하고 싶은 GPU ID들을 여기에 설정
+AVAILABLE_GPUS="0"  # 사용하고 싶은 GPU ID들을 여기에 설정
 
 # GPU 목록을 배열로 변환
 IFS=',' read -r -a GPU_ARRAY <<< "$AVAILABLE_GPUS"
@@ -26,23 +26,23 @@ declare -A experiments=(
     #["upenn_0714_Cooking_6_2"]="gp03_static_vda_fixedcam_slammap 00bc5ad2-7c3a-403d-a4a6-e6d437d29000"
     #["sfu_cooking032_3"]="cam01_static_vda_fixedcam_slammap 5cb66fee-c010-4df7-925a-55cda04173c8"
     
-    ["iiith_cooking_148_1"]="cam01_no_vda_fixedcam_slammap_exo_intr_gt 34ba42af-5c77-434e-a8c4-cf745bcaaf0d"
-    ["sfu_cooking_013_1"]="cam01_no_vda_fixedcam_slammap_exo_intr_gt 3059469a-03fc-4ae0-bbf7-b08187d1b290"
-    ["indiana_cooking_27_2"]="cam04_no_vda_fixedcam_slammap_exo_intr_gt 2f61dd27-2ad2-4029-b36d-19a02ae8feec"
-    ["uniandes_cooking_009_2"]="cam04_no_vda_fixedcam_slammap_exo_intr_gt e076b7e5-e67e-4452-8b00-83046dd85c62"
+    #["iiith_cooking_148_1"]="cam01_no_vda_fixedcam_slammap_exo_intr_gt 34ba42af-5c77-434e-a8c4-cf745bcaaf0d"
+    # ["sfu_cooking_013_1"]="cam01_no_vda_fixedcam_slammap_exo_intr_gt 3059469a-03fc-4ae0-bbf7-b08187d1b290"
+    # ["indiana_cooking_27_2"]="cam04_no_vda_fixedcam_slammap_exo_intr_gt 2f61dd27-2ad2-4029-b36d-19a02ae8feec"
+    # ["uniandes_cooking_009_2"]="cam04_no_vda_fixedcam_slammap_exo_intr_gt e076b7e5-e67e-4452-8b00-83046dd85c62"
     ["georgiatech_cooking_01_03_2"]="cam02_moge_no_vda_fixedcam_slammap_exo_intr_gt 0e015bb1-8406-4f3f-a49e-3c8dd4a025e9"
 )
 
 # 공통 설정
-OUTPUT_DIR="ego_view_rendering_debug"
-POINT_SIZE="1.5"
+OUTPUT_DIR="ego_view_rendering_inthewild"
+POINT_SIZE="5.0"
 START_FRAME="0"
 END_FRAME="48"
 #15373+290=15663
-SOURCE_START_FRAME="18685"
-SOURCE_END_FRAME="18733"
-# SOURCE_START_FRAME="0"
-# SOURCE_END_FRAME="299"
+# SOURCE_START_FRAME="18685"
+# SOURCE_END_FRAME="18733"
+SOURCE_START_FRAME="0"
+SOURCE_END_FRAME="299"
 
 # 실험 실행 함수 (특정 GPU에서 실행)
 run_experiment() {
@@ -52,11 +52,17 @@ run_experiment() {
     local gpu_id=$4
     
     # 경로 설정
-    INPUT_DIR="vipe_results/${take_name}/${result_subdir}"
-    EGO_CAMERA_POSE_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/annotations/ego_pose/train/camera_pose/${ego_uuid}.json"
-    EXO_CAMERA_POSE_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/takes/${take_name}/trajectory/gopro_calibs.csv"
-    ONLINE_CALIBRATION_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/takes/${take_name}/trajectory/online_calibration.jsonl"
-    
+    # INPUT_DIR="vipe_results/${take_name}/${result_subdir}"
+    # EGO_CAMERA_POSE_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/annotations/ego_pose/train/camera_pose/${ego_uuid}.json"
+    # EXO_CAMERA_POSE_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/takes/${take_name}/trajectory/gopro_calibs.csv"
+    # ONLINE_CALIBRATION_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/takes/${take_name}/trajectory/online_calibration.jsonl"
+
+    INPUT_DIR="vipe_results/ironman_old_moge_static_vda_fixedcam_slammap"
+    EGO_CAMERA_POSE_PATH="/home/nas_main/taewoongkang/dohyeon/Exo-to-Ego/Ego-Renderer-from-ViPE/inthewild_dataset/ego_prior_datasets_split_with_camera_params.json"
+    EXO_CAMERA_POSE_PATH="inthewild"
+    #ONLINE_CALIBRATION_PATH="/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/takes/fair_cooking_05_2/trajectory/online_calibration.jsonl" #! hardcoded
+    ONLINE_CALIBRATION_PATH="/home/nas5/kinamkim/DATA/tmp_EgoExo4D/takes/fair_cooking_05_2/trajectory/online_calibration.jsonl"
+
     echo "[GPU $gpu_id] =========================================="
     echo "[GPU $gpu_id] Running experiment: ${take_name}/${result_subdir}"
     echo "[GPU $gpu_id] =========================================="
@@ -73,9 +79,9 @@ run_experiment() {
         --end_frame $END_FRAME \
         --source_start_frame $SOURCE_START_FRAME \
         --source_end_frame $SOURCE_END_FRAME \
-        --use_mean_bg \
         --fish_eye_rendering \
-        --only_bg
+        --use_mean_bg \
+        #--only_bg
         
     echo "[GPU $gpu_id] Completed: ${take_name}/${result_subdir}"
 }

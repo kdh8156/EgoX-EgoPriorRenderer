@@ -96,6 +96,7 @@ class GlobalContext:
     semidense_points: np.ndarray = None  # Ego4D semi-dense point cloud
     gt_exo_intrinsics_K: np.ndarray | None = None  # 3x3
     gt_exo_image_size: Tuple[int, int] | None = None  # (width, height)
+    ego_manual: bool = False  # Manual ego camera control mode
     
     def __post_init__(self):
         # dataclass에서 None으로 초기화된 tensor 필드들 처리
@@ -329,7 +330,14 @@ class ClientClosures:
         self.gui_playing: viser.GuiCheckboxHandle | None = None
         self.gui_show_all_frames: viser.GuiCheckboxHandle | None = None
         self.ego_frustum_handles: list[viser.CameraFrustumHandle] = []
+        self.ego_trajectory_handles: list = []  # 점선을 위한 여러 spline handles
         self.semidense_pcd_handle: viser.PointCloudHandle | None = None
+        
+        # Manual ego camera control
+        self.manual_ego_frame: viser.FrameHandle | None = None
+        self.manual_ego_frustum: viser.CameraFrustumHandle | None = None
+        self.manual_ego_transform_handle: viser.TransformControlsHandle | None = None
+        self.gui_manual_extrinsic_text: viser.GuiMarkdownHandle | None = None
 
     async def stop(self):
         self.task.cancel()
@@ -362,7 +370,7 @@ class ClientClosures:
 
         with self.client.gui.add_folder("Scene"):
             self.gui_point_size = self.client.gui.add_slider(
-                "Point size", min=0.0001, max=0.01, step=0.001, initial_value=0.001
+                "Point size", min=0.0001, max=0.1, step=0.001, initial_value=0.001
             )
 
             # Update point cloud size
@@ -449,6 +457,37 @@ class ClientClosures:
                 snapshot_img = self.client.get_render(height=720, width=1280, transport_format="png")
                 self.client.send_file_download(file_name, iio.imwrite("<bytes>", snapshot_img, extension=".png"))
 
+        # Manual Ego Camera Control
+        if self.global_context().ego_manual:
+            with self.client.gui.add_folder("Manual Ego Camera"):
+                gui_show_manual_ego = self.client.gui.add_checkbox(
+                    "Show Manual Camera",
+                    initial_value=True,
+                    hint="Show/hide manual ego camera frustum"
+                )
+                
+                gui_reset_manual_ego = self.client.gui.add_button(
+                    "Reset to Default Pose",
+                    hint="Reset manual camera to 90° CCW rotation"
+                )
+                
+                self.gui_manual_extrinsic_text = self.client.gui.add_markdown(
+                    "**World to Manual Cam Extrinsic (4x3):**\n```\nInitializing...\n```"
+                )
+                
+                @gui_show_manual_ego.on_update
+                async def _(_) -> None:
+                    if self.manual_ego_frame is not None:
+                        self.manual_ego_frame.visible = gui_show_manual_ego.value
+                    if self.manual_ego_frustum is not None:
+                        self.manual_ego_frustum.visible = gui_show_manual_ego.value
+                    if self.manual_ego_transform_handle is not None:
+                        self.manual_ego_transform_handle.visible = gui_show_manual_ego.value
+                
+                @gui_reset_manual_ego.on_click
+                def _(_) -> None:
+                    self._reset_manual_ego_camera()
+
         await self.on_sample_update(None)
 
         while True:
@@ -468,8 +507,13 @@ class ClientClosures:
             take_uuid = self.global_context().take_uuid
             if take_uuid is not None:
                 self._add_ego_camera_frustums()
+                self._add_ego_trajectory()  # Add trajectory visualization
                 self._add_ego4d_world_axes()
                 self._add_semidense_point_cloud()
+            
+            # Add manual ego camera if enabled
+            if self.global_context().ego_manual:
+                self._add_manual_ego_camera()
                 
         self._rebuild_playback_gui()
         self._set_frustum_color(self.gui_colorful_frustum_toggle.value)
@@ -554,6 +598,76 @@ class ClientClosures:
             logger.info(f"Added ego camera frustum for frame {frame_idx} at position {ego_position}")
         
         logger.info(f"Successfully added {len(ego_extrinsics_list)} ego camera frustums")
+
+    def _add_ego_trajectory(self):
+        """Add trajectory line connecting ego camera positions."""
+        logger.info("Adding ego camera trajectory...")
+        
+        ego_extrinsics_list = self.global_context().ego_extrinsics_list
+        exo_cam_to_world = self.global_context().exo_cam_to_world
+        
+        if ego_extrinsics_list is None or exo_cam_to_world is None:
+            logger.warning("Missing ego camera data, skipping trajectory visualization")
+            return
+        
+        try:
+            current_artifact = self.global_context().artifacts[self.gui_id.value]
+            # Use first ViPE exo camera pose as world alignment reference
+            vipe_c2w_iter = read_pose_artifacts(current_artifact.pose_path)[1].matrix().numpy()
+            vipe_exo_c2w = next(iter(vipe_c2w_iter))
+            ego_exo_c2w = exo_cam_to_world
+            # T_egoWorld_to_vipeWorld maps Ego4D world coords -> ViPE world coords
+            T_egoW_to_vipeW = vipe_exo_c2w @ np.linalg.inv(ego_exo_c2w)
+        except Exception as e:
+            logger.warning(f"Failed to compute Ego4D->ViPE alignment for trajectory: {e}")
+            return
+        
+        # Extract ego camera positions in ViPE world coordinates
+        trajectory_points = []
+        for ego_w2c in ego_extrinsics_list:
+            # Convert ego W2C (3x4) to 4x4 matrix
+            ego_w2c_4x4 = np.eye(4)
+            ego_w2c_4x4[:3, :] = ego_w2c
+            
+            # Convert to ego C2W in Ego4D world
+            ego_c2w_egoW = np.linalg.inv(ego_w2c_4x4)
+            
+            # Convert ego camera pose into ViPE world coordinates
+            ego_c2w_vipeW = T_egoW_to_vipeW @ ego_c2w_egoW
+            
+            # Extract position
+            ego_position = ego_c2w_vipeW[:3, 3]
+            trajectory_points.append(ego_position)
+        
+        trajectory_points = np.array(trajectory_points)
+        
+        # Add trajectory as thick dashed line (점선 효과)
+        # 점선을 만들기 위해 일정 간격으로 선분을 건너뛰며 추가
+        if len(trajectory_points) >= 2:
+            # 점선 효과: 2개씩 건너뛰며 선분 생성 (dash pattern)
+            dash_segments = []
+            for i in range(0, len(trajectory_points) - 1, 3):  # 3칸마다 1개씩 그림
+                if i + 1 < len(trajectory_points):
+                    # 각 dash는 2-3개 포인트로 구성
+                    end_idx = min(i + 2, len(trajectory_points))
+                    dash_segments.append(trajectory_points[i:end_idx])
+            
+            # 여러 개의 spline을 생성해서 점선 효과
+            self.ego_trajectory_handles = []
+            for idx, dash_points in enumerate(dash_segments):
+                if len(dash_points) >= 2:
+                    handle = self.client.scene.add_spline_catmull_rom(
+                        f"/ego_trajectory/dash_{idx}",
+                        positions=dash_points,
+                        line_width=5.0,  # 두꺼운 선 (2.0 -> 5.0)
+                        color=(255, 0, 0),  # 빨간색
+                        segments=20,  # 각 dash의 부드러움
+                    )
+                    self.ego_trajectory_handles.append(handle)
+            
+            logger.info(f"Added dashed ego trajectory with {len(dash_segments)} segments from {len(trajectory_points)} points")
+        else:
+            logger.warning("Not enough points to create trajectory")
 
     def _add_ego4d_world_axes(self):
         """Add Ego4D world coordinate system axes to the scene."""
@@ -655,6 +769,119 @@ class ClientClosures:
         
         logger.info(f"Added {points_vipe.shape[0]} semi-dense points to scene")
 
+    def _add_manual_ego_camera(self):
+        """Add manual ego camera with transform controls."""
+        logger.info("Adding manual ego camera...")
+        
+        default_rotation = R.from_euler('z', 90, degrees=True).as_matrix()
+        default_position = np.array([0.0, 0.0, 0.0])
+        default_quat = tf.SO3.from_matrix(default_rotation).wxyz
+        
+        # Create transform controls
+        self.manual_ego_transform_handle = self.client.scene.add_transform_controls(
+            "/manual_ego_camera/controls",
+            scale=0.5,
+            line_width=5.0,
+        )
+        self.manual_ego_transform_handle.wxyz = default_quat
+        self.manual_ego_transform_handle.position = default_position
+        
+        # Create camera frustum
+        fov = np.radians(60.0)
+        self.manual_ego_frustum = self.client.scene.add_camera_frustum(
+            "/manual_ego_camera/frustum",
+            fov=fov,
+            aspect=1.0,
+            scale=0.2,
+            color=(255, 165, 0),
+            wxyz=default_quat,
+            position=default_position,
+        )
+        
+        # Create frame handle
+        self.manual_ego_frame = self.client.scene.add_frame(
+            "/manual_ego_camera/frame",
+            wxyz=default_quat,
+            position=default_position,
+            axes_length=0.2,
+            axes_radius=0.015,
+        )
+        
+        # Update callback for transform controls
+        @self.manual_ego_transform_handle.on_update
+        def _(_) -> None:
+            self._update_manual_ego_camera()
+        
+        # Initial update
+        self._update_manual_ego_camera()
+        
+        logger.info("Manual ego camera added")
+    
+    def _reset_manual_ego_camera(self):
+        """Reset manual ego camera to default pose (90° CCW around Z)."""
+        if self.manual_ego_transform_handle is None:
+            return
+            
+        # Default pose: 90° counter-clockwise rotation around Z-axis
+        default_rotation = R.from_euler('z', 90, degrees=True).as_matrix()
+        default_position = np.array([0.0, 0.0, 0.0])
+        default_quat = tf.SO3.from_matrix(default_rotation).wxyz
+        
+        # Update transform control
+        self.manual_ego_transform_handle.wxyz = default_quat
+        self.manual_ego_transform_handle.position = default_position
+        
+        # Update will be triggered by on_update callback
+        logger.info("Manual ego camera reset to default pose")
+    
+    def _update_manual_ego_camera(self):
+        """Update manual ego camera frustum and extrinsic matrix display."""
+        if self.manual_ego_transform_handle is None:
+            return
+        
+        # Get current transform
+        position = self.manual_ego_transform_handle.position
+        wxyz = self.manual_ego_transform_handle.wxyz
+        
+        # Update frustum to match transform control
+        if self.manual_ego_frustum is not None:
+            self.manual_ego_frustum.position = position
+            self.manual_ego_frustum.wxyz = wxyz
+        
+        # Update frame to match transform control
+        if self.manual_ego_frame is not None:
+            self.manual_ego_frame.position = position
+            self.manual_ego_frame.wxyz = wxyz
+        
+        # Compute camera-to-world matrix (C2W)
+        rotation_matrix = tf.SO3(wxyz).as_matrix()
+        c2w = np.eye(4)
+        c2w[:3, :3] = rotation_matrix
+        c2w[:3, 3] = position
+        
+        # Compute world-to-camera matrix (W2C, extrinsic)
+        w2c = np.linalg.inv(c2w)
+        w2c_4x3 = w2c[:3, :]  # Take first 3 rows (4x3 extrinsic format)
+        
+        # Update GUI text with formatted extrinsic matrix
+        if self.gui_manual_extrinsic_text is not None:
+            extrinsic_str = "**World to Manual Cam Extrinsic (4x3):**\n```\n"
+            extrinsic_str += (
+                f"[{w2c_4x3[0, 0]:8.4f}, {w2c_4x3[0, 1]:8.4f}, "
+                f"{w2c_4x3[0, 2]:8.4f}, {w2c_4x3[0, 3]:8.4f}],\n"
+            )
+            extrinsic_str += (
+                f"[{w2c_4x3[1, 0]:8.4f}, {w2c_4x3[1, 1]:8.4f}, "
+                f"{w2c_4x3[1, 2]:8.4f}, {w2c_4x3[1, 3]:8.4f}],\n"
+            )
+            extrinsic_str += (
+                f"[{w2c_4x3[2, 0]:8.4f}, {w2c_4x3[2, 1]:8.4f}, "
+                f"{w2c_4x3[2, 2]:8.4f}, {w2c_4x3[2, 3]:8.4f}]\n"
+            )
+            extrinsic_str += "```"
+            self.gui_manual_extrinsic_text.content = extrinsic_str
+
+
     def _rebuild_scene(self):
         current_artifact = self.global_context().artifacts[self.gui_id.value]
         spatial_subsample: int = self.gui_s_sub.value
@@ -667,6 +894,13 @@ class ClientClosures:
         first_frame_y: np.ndarray | None = None
 
         self.client.scene.reset()
+        
+        # ! 원래대로 하고 싶으면 밑의 3줄 주석 처리
+        # 크로마키 그린 배경 재설정 (scene.reset()이 배경을 지우므로)
+        # chroma_green_bg = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        # chroma_green_bg[:, :] = [0, 177, 64]
+        # self.client.scene.set_background_image(image=chroma_green_bg, format="png")
+        
         self.client.camera.fov = np.deg2rad(self.gui_fov.value)
         self.scene_frame_handles = []
         
@@ -675,6 +909,7 @@ class ClientClosures:
             self.global_context().ego_extrinsics_list is not None and
             self.global_context().exo_cam_to_world is not None):
             self._add_ego_camera_frustums()
+            self._add_ego_trajectory()  # Add trajectory visualization
             self._add_ego4d_world_axes()
         
         # Mean background depth 계산 (use_mean_bg가 true이고 아직 계산되지 않은 경우)
@@ -1208,7 +1443,7 @@ def get_host_ip() -> str:
     return internal_ip
 
 
-def run_viser(base_path: Path, port: int = 20540, use_mean_bg: bool = False, take_uuid: str = None, start_frame: int = None, use_exo_intrinsic_gt: bool = False):
+def run_viser(base_path: Path, port: int = 20540, use_mean_bg: bool = False, take_uuid: str = None, start_frame: int = None, use_exo_intrinsic_gt: bool = False, ego_manual: bool = False):
     # Get list of artifacts.
     logger.info(f"Loading artifacts from {base_path}")
     artifacts: list[ArtifactPath] = list(ArtifactPath.glob_artifacts(base_path, use_video=True))
@@ -1359,7 +1594,8 @@ def run_viser(base_path: Path, port: int = 20540, use_mean_bg: bool = False, tak
         exo_cam_to_world=exo_cam_to_world,
         semidense_points=semidense_points,
         gt_exo_intrinsics_K=gt_K,
-        gt_exo_image_size=gt_size
+        gt_exo_image_size=gt_size,
+        ego_manual=ego_manual
     )
 
     # 새 코드: 모든 인터페이스에서 수신 대기
@@ -1412,13 +1648,18 @@ def main():
         type=int,
         help="Start frame for ego camera pose visualization (required if --take_uuid is provided)"
     )
+    parser.add_argument(
+        "--ego_manual",
+        action="store_true",
+        help="Enable manual ego camera control with transform handles"
+    )
     args = parser.parse_args()
 
     # Validate that start_frame is provided if take_uuid is provided
     if args.take_uuid is not None and args.start_frame is None:
         parser.error("--start_frame is required when --take_uuid is provided")
 
-    run_viser(args.base_path, args.port, args.use_mean_bg, args.take_uuid, args.start_frame)
+    run_viser(args.base_path, args.port, args.use_mean_bg, args.take_uuid, args.start_frame, False, args.ego_manual)
 
 
 if __name__ == "__main__":

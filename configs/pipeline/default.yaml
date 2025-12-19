@@ -7,7 +7,7 @@ instance: vipe.pipeline.default.DefaultAnnotationPipeline
 assume_fixed_camera_pose: false
 
 # Exo GT intrinsics (take_uuid)
-use_exo_intrinsic_gt: false
+
 
 # Init configs
 init:

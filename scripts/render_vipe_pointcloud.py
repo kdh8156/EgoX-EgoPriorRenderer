@@ -302,9 +302,13 @@ def check_coordinate_system_consistency(T_cam_to_world, ego_intrinsics, ego_extr
     
     logger.info("=" * 60)
 
-def load_ego_camera_poses(camera_pose_path: str) -> Tuple[np.ndarray, List[np.ndarray]]:
+def load_ego_camera_poses(camera_pose_path: str, input_dir: str = None) -> Tuple[np.ndarray, List[np.ndarray]]:
     """
     Load ego camera poses from JSON file.
+    
+    Args:
+        camera_pose_path: Path to JSON file containing camera poses
+        input_dir: ViPE input directory (used for matching when loading from ego_prior_datasets JSON)
     
     Returns:
         intrinsics: 3x3 camera intrinsics matrix
@@ -313,6 +317,53 @@ def load_ego_camera_poses(camera_pose_path: str) -> Tuple[np.ndarray, List[np.nd
     with open(camera_pose_path, 'r') as f:
         data = json.load(f)
     
+    # Special case: ego_prior_datasets_split_with_camera_params.json
+    if camera_pose_path == "/home/nas_main/taewoongkang/dohyeon/Exo-to-Ego/Ego-Renderer-from-ViPE/inthewild_dataset/ego_prior_datasets_split_with_camera_params.json":
+        from pathlib import Path
+        
+        if input_dir is None:
+            raise ValueError("input_dir must be provided when using ego_prior_datasets_split_with_camera_params.json")
+        
+        # Get stem from input_dir (e.g., "ironman_captain_moge_static_vda_fixedcam_slammap" -> "ironman_captain")
+        input_stem_full = Path(input_dir).stem
+        if '_moge' in input_stem_full:
+            input_stem = input_stem_full.split('_moge')[0]
+        else:
+            input_stem = input_stem_full.split('_')[0]
+        logger.info(f"Looking for vipe_path with stem matching: {input_stem}")
+        
+        # Search for matching sample in test_datasets
+        matching_sample = None
+        for sample in data['test_datasets']:
+            vipe_path = sample['vipe_path']
+            vipe_stem_full = Path(vipe_path).stem
+            if '_moge' in vipe_stem_full:
+                vipe_stem = vipe_stem_full.split('_moge')[0]
+            else:
+                vipe_stem = vipe_stem_full.split('_')[0]
+            
+            if vipe_stem == input_stem:
+                matching_sample = sample
+                logger.info(f"Found matching sample: vipe_path={vipe_path}")
+                break
+        
+        if matching_sample is None:
+            raise ValueError(f"No matching sample found for input_dir stem '{input_stem}' in {camera_pose_path}")
+        
+        # Extract ego intrinsics and extrinsics from matching sample
+        intrinsics = np.array(matching_sample['ego_intrinsics'])  # 3x3
+        
+        # ego_extrinsics is a list of 3x4 matrices
+        ego_extrinsics_raw = matching_sample['ego_extrinsics']
+        extrinsics_list = [np.array(ext) for ext in ego_extrinsics_raw]  # Convert each 3x4 matrix
+        
+        logger.info(f"Loaded ego camera poses from ego_prior_datasets JSON")
+        logger.info(f"Loaded intrinsics: {intrinsics.shape}")
+        logger.info(f"Loaded {len(extrinsics_list)} extrinsics matrices (W2C - world-to-camera format)")
+        
+        return intrinsics, extrinsics_list
+    
+    # Standard case: Ego4D camera pose file with aria camera
     # Find aria camera (ego view)
     aria_key = None
     for key in data.keys():
@@ -437,7 +488,7 @@ def load_aria_distortion_coeffs(
     
     return radial_distortion_coeffs, tangential_distortion_coeffs, thinPrism_distortion_coeffs, focal_length, principal_point, original_size
 
-def parse_camera_id_from_input_dir(input_dir: str) -> str:
+def parse_camera_id_from_input_dir(input_dir: str) -> Optional[str]:
     """
     Parse camera ID from input directory path.
     
@@ -445,7 +496,7 @@ def parse_camera_id_from_input_dir(input_dir: str) -> str:
         input_dir: Input directory path like 'vipe_results/take_name/cam04_static_vda_fixedcam_slammap' or 'vipe_results/take_name/gp02_static_vda_fixedcam_slammap'
     
     Returns:
-        Camera ID string like 'cam04' or 'gp02'
+        Camera ID string like 'cam04' or 'gp02', or None if no camera ID pattern found (e.g., for in-the-wild videos)
     """
     import re
     
@@ -458,16 +509,17 @@ def parse_camera_id_from_input_dir(input_dir: str) -> str:
         logger.info(f"Parsed camera ID '{cam_id}' from input_dir: {input_dir}")
         return cam_id
     else:
-        # No fallback - raise error if camera ID cannot be parsed
-        raise ValueError(f"Could not parse camera ID from input_dir: {input_dir}. Expected format with 'camXX' or 'gpXX' pattern (e.g., cam01, cam02, gp01, gp02, etc.)")
+        # Return None for in-the-wild videos (no camera ID)
+        logger.info(f"No camera ID pattern found in input_dir: {input_dir} (likely in-the-wild video)")
+        return None
 
-def load_exo_camera_pose(exo_camera_pose_path: str, cam_id: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_exo_camera_pose(exo_camera_pose_path: str, cam_id: Optional[str]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load exo camera pose from Ego4D trajectory CSV file.
     
     Args:
-        exo_camera_pose_path: Path to gopro_calibs.csv file
-        cam_id: Camera ID to extract (required, e.g., 'cam01', 'cam02', 'gp01', 'gp02', etc.)
+        exo_camera_pose_path: Path to gopro_calibs.csv file (or "inthewild" for identity matrix)
+        cam_id: Camera ID to extract (e.g., 'cam01', 'cam02', 'gp01', 'gp02', etc.), or None for in-the-wild videos
     
     Returns:
         T_world_to_cam: 4x4 transformation matrix from world to camera coordinates
@@ -476,6 +528,29 @@ def load_exo_camera_pose(exo_camera_pose_path: str, cam_id: str) -> Tuple[np.nda
     """
     import pandas as pd
     from scipy.spatial.transform import Rotation as R
+    
+    # Special case: in-the-wild videos (no exo camera pose available)
+    if exo_camera_pose_path == "inthewild":
+        logger.info("Using identity extrinsic for in-the-wild video (no exo camera pose)")
+        # Identity transformation: world == camera coordinate system
+        T_world_to_cam = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ], dtype=np.float32)
+        T_cam_to_world = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ], dtype=np.float32)
+        camera_center = np.array([0, 0, 0], dtype=np.float32)  # Origin
+        return T_world_to_cam, T_cam_to_world, camera_center
+    
+    # Validate cam_id is provided for non-inthewild cases
+    if cam_id is None:
+        raise ValueError("cam_id is required when exo_camera_pose_path is not 'inthewild'")
     
     # Read CSV file
     df = pd.read_csv(exo_camera_pose_path)
@@ -1718,7 +1793,7 @@ def main():
     logger.info(f"Using camera ID: {cam_id}")
     
     logger.info(f"Loading ego camera poses from {args.ego_camera_pose_path}")
-    ego_intrinsics, ego_extrinsics_list = load_ego_camera_poses(args.ego_camera_pose_path)
+    ego_intrinsics, ego_extrinsics_list = load_ego_camera_poses(args.ego_camera_pose_path, input_dir=args.input_dir)
     
     # Choose background building method based on use_mean_bg flag
     if getattr(args, 'use_mean_bg', False):

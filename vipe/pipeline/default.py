@@ -96,7 +96,58 @@ class DefaultAnnotationPipeline(Pipeline):
 
         # Use GT intrinsics processor if take_uuid is provided, otherwise use GeoCalib
         if self.use_exo_intrinsic_gt is not None:
-            init_processors.append(GTIntrinsicsProcessor(video_stream, take_uuid=self.use_exo_intrinsic_gt, camera_type=self.camera_type))
+            # Parse take_name and start_frame from video path if camera is exo_GT
+            take_name = None
+            start_frame = None
+            
+            logger.info(f"Video stream name: {video_stream.name()}")
+            logger.info(f"Video stream type: {type(video_stream)}")
+            
+            if video_stream.name() == "exo_GT":
+                # Need to get video path from the underlying stream
+                # Unwrap ProcessedVideoStream to get to RawMp4Stream
+                current_stream = video_stream
+                logger.info(f"Starting unwrap from {type(current_stream)}")
+                
+                while hasattr(current_stream, 'stream'):
+                    current_stream = current_stream.stream
+                    logger.info(f"Unwrapped to {type(current_stream)}")
+                
+                logger.info(f"Final stream type: {type(current_stream)}")
+                logger.info(f"Has path attribute: {hasattr(current_stream, 'path')}")
+                
+                # Now current_stream should be RawMp4Stream which has .path attribute
+                if hasattr(current_stream, 'path'):
+                    from pathlib import Path
+                    video_path = Path(current_stream.path)
+                    logger.info(f"Video path: {video_path}")
+                    
+                    # Get the 4th parent directory name which contains {take_name}_{start_frame}_{end_frame}
+                    # Example: uniandes_cooking_008_8_1000_1048
+                    take_dir = video_path.parents[3].name
+                    logger.info(f"Take dir: {take_dir}")
+                    
+                    # Parse: split from right by '_', max 2 splits to get [take_name, start_frame, end_frame]
+                    parts = take_dir.rsplit('_', 2)
+                    logger.info(f"Parts: {parts}")
+                    if len(parts) == 3:
+                        take_name = parts[0]
+                        start_frame = int(parts[1])
+                        logger.info(f"Parsed from video path: take_name={take_name}, start_frame={start_frame}")
+                    else:
+                        logger.warning(f"Failed to parse take_dir '{take_dir}' into 3 parts")
+                else:
+                    logger.warning(f"Current stream does not have 'path' attribute")
+            else:
+                logger.info(f"Video stream name is not 'exo_GT', skipping path parsing")
+            
+            init_processors.append(GTIntrinsicsProcessor(
+                video_stream, 
+                take_uuid=self.use_exo_intrinsic_gt, 
+                camera_type=self.camera_type,
+                take_name=take_name,
+                start_frame=start_frame
+            ))
         else:
             init_processors.append(GeoCalibIntrinsicsProcessor(video_stream, camera_type=self.camera_type))
         if self.init_cfg.instance is not None:

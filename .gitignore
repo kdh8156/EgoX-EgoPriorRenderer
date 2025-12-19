@@ -172,6 +172,12 @@ JIAHUI.md
 # ego view render results
 ego_view_rendering/
 ego_view_rendering_debug/
+ego_view_rendering_inthewild/
 render_logs/
+ego_gt/
+ego_extrinsic_visualize/
 
 scripts_dummy/
+inthewild_dataset/
+
+scripts/vis_cam.py

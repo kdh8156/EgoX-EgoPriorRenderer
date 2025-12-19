@@ -343,6 +343,7 @@ class CachedVideoStream(VideoStream):
         self.iterator = iter(video_stream)
         self.data: list[VideoFrame] = []
         self.desc = desc
+        self.stream = video_stream  # Store original stream for access to underlying properties
 
     def fps(self) -> float:
         return self._fps

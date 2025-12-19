@@ -94,7 +94,7 @@ def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: 
     
     if use_exo_intrinsic_gt is not None:
         overrides.append("pipeline.slam.optimize_intrinsics=false")
-        overrides.append(f"pipeline.use_exo_intrinsic_gt={use_exo_intrinsic_gt}")
+        overrides.append(f"+pipeline.use_exo_intrinsic_gt={use_exo_intrinsic_gt}")
         logger.info(f"Exo GT intrinsics mode enabled (take_uuid: {use_exo_intrinsic_gt}) - intrinsics optimization will be disabled")
 
     # Set up stream configuration based on input type
@@ -148,12 +148,13 @@ def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: 
 @click.option("--take_uuid", type=str, help="Take UUID for ego camera pose visualization (optional)")
 @click.option("--start_frame", type=int, help="Start frame for ego camera pose visualization (required if --take_uuid is provided)")
 @click.option("--use_exo_intrinsic_gt", is_flag=True, help="Use exo GT intrinsics from online_calibration.jsonl instead of ViPE intrinsics")
-def visualize(data_path: Path, port: int, use_mean_bg: bool, take_uuid: str, start_frame: int, use_exo_intrinsic_gt: bool):
+@click.option("--ego_manual", is_flag=True, help="Enable manual ego camera control with transform handles")
+def visualize(data_path: Path, port: int, use_mean_bg: bool, take_uuid: str, start_frame: int, use_exo_intrinsic_gt: bool, ego_manual: bool):
     # Validate that start_frame is provided if take_uuid is provided
     if take_uuid is not None and start_frame is None:
         raise click.ClickException("--start_frame is required when --take_uuid is provided")
     
-    run_viser(data_path, port, use_mean_bg, take_uuid, start_frame, use_exo_intrinsic_gt)
+    run_viser(data_path, port, use_mean_bg, take_uuid, start_frame, use_exo_intrinsic_gt, ego_manual)
 
 
 @click.group()

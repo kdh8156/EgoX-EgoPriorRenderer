@@ -112,30 +112,67 @@ class GTIntrinsicsProcessor(StreamProcessor):
         video_stream: VideoStream,
         take_uuid: str,
         camera_type: CameraType = CameraType.PINHOLE,
+        take_name: str | None = None,
+        start_frame: int | None = None,
     ) -> None:
         super().__init__()
         self.camera_type = camera_type
         self.take_uuid = take_uuid
-        self.camera_name = video_stream.name()  # e.g., "cam01"
+        self.camera_name = video_stream.name()  # e.g., "cam01" or "exo_GT"
         
-        # Load GT intrinsics from JSON
         from pathlib import Path
-        json_path = Path(f"/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/annotations/ego_pose/train/camera_pose/{take_uuid}.json")
-        
-        if not json_path.exists():
-            raise FileNotFoundError(f"GT intrinsics file not found: {json_path}")
-            
         import json
-        with open(json_path, 'r') as f:
-            data = json.load(f)
-            
-        if self.camera_name not in data:
-            raise KeyError(f"Camera '{self.camera_name}' not found in GT data. Available cameras: {list(data.keys())}")
-            
-        camera_data = data[self.camera_name]
         
-        # Extract intrinsics matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-        K_matrix = np.array(camera_data["camera_intrinsics"])
+        # Check if camera_name is "exo_GT" - need take_name and start_frame
+        if self.camera_name == "exo_GT":
+            # take_name and start_frame should be provided by caller
+            if take_name is None:
+                raise ValueError("take_name must be provided for exo_GT camera")
+            if start_frame is None:
+                raise ValueError("start_frame must be provided for exo_GT camera")
+            
+            # Load camera params JSON
+            params_json_path = Path("/home/nas_main/kinamkim/Repos/Ego-Renderer-from-ViPE/EGO4D_4DNEX_DATASET/data_wan/ego_prior_datasets_split_with_camera_params.json")
+            
+            if not params_json_path.exists():
+                raise FileNotFoundError(f"Camera params file not found: {params_json_path}")
+            
+            with open(params_json_path, 'r') as f:
+                params_data = json.load(f)
+            
+            # Find matching entry in datasets list
+            matching_entry = None
+            for entry in params_data['datasets']:
+                # Check if 'path' contains take_name and start_frame matches
+                if take_name in entry['path'] and entry['source_frame_start'] == start_frame:
+                    matching_entry = entry
+                    break
+            
+            if matching_entry is None:
+                raise ValueError(f"No matching entry found for take_name='{take_name}', start_frame={start_frame} in {params_json_path}")
+            
+            # Extract intrinsics from matching entry
+            K_matrix = np.array(matching_entry["camera_intrinsics"])
+            logging.info(f"Loaded GT intrinsics from ego_prior_datasets for exo_GT: take_name={take_name}, start_frame={matching_entry['source_frame_start']}")
+        else:
+            # Original logic for specific camera names (cam01, cam02, etc.)
+            json_path = Path(f"/home/nas_main/kinamkim/DATA/Ego4D/dataset_train/annotations/ego_pose/train/camera_pose/{take_uuid}.json")
+            
+            if not json_path.exists():
+                raise FileNotFoundError(f"GT intrinsics file not found: {json_path}")
+            
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            
+            if self.camera_name not in data:
+                raise KeyError(f"Camera '{self.camera_name}' not found in GT data. Available cameras: {list(data.keys())}")
+            
+            camera_data = data[self.camera_name]
+            
+            # Extract intrinsics matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+            K_matrix = np.array(camera_data["camera_intrinsics"])
+        
+        # Common intrinsics extraction
         self.gt_fx = K_matrix[0, 0]
         self.gt_fy = K_matrix[1, 1]
         self.gt_cy = K_matrix[1, 2]
@@ -144,7 +181,8 @@ class GTIntrinsicsProcessor(StreamProcessor):
         # PINHOLE이면 distortion 사용 안 함, 아니면 사용
         is_pinhole = camera_type == CameraType.PINHOLE
         if not is_pinhole:
-            distortion_coeffs = camera_data.get("distortion_coeffs", [])
+            # For exo_GT from params JSON, distortion info might not be available
+            distortion_coeffs = camera_data.get("distortion_coeffs", []) if self.camera_name != "exo_GT" else []
             # GeoCalibProcessor는 단일 distortion 값만 사용하므로 첫 번째 값만 사용
             if distortion_coeffs:
                 self.distortion = [distortion_coeffs[0]]
