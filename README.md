@@ -67,7 +67,7 @@ vipe visualize vipe_results/YOUR_VIPE_RESULT
   
   **Manual annotation workflow:**
   1. For each frame, position the ego camera frustum to align with the appropriate head pose in the 3D view
-  2. Register the positioned frustum using the UI panel in the top-right corner
+  2. Fill in the `ego_extrinsics` field in `meta.json` using the ego camera extrinsics displayed in the top-right UI panel."
   3. Repeat for all frames to build the complete ego trajectory
   4. See **Appendix Fig. 8** in the paper for examples of frustum positioning aligned with head poses
 
