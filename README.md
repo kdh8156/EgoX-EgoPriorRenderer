@@ -75,11 +75,11 @@ vipe visualize vipe_results/YOUR_VIPE_RESULT
   
   Since ego trajectories are manually annotated for in-the-wild videos, the final rendering results can vary significantly depending on how you position the ego camera frustums. Different annotation strategies may lead to different visual perspectives in the rendered ego-view videos.
 
-  Below is a comparison showing two different ego trajectory annotations for the same video (Ironman scene):
+  Below is a comparison showing **EgoX generation results from two different ego trajectory annotations** for the same exocentric input video (Ironman scene).
 
   | Version 1 | Version 2 |
   |-----------|-----------|
-  | ![Ironman Ver1](assets/ironman_ver1.png) | ![Ironman Ver2](assets/ironman_ver2.png) |
+  | <img src="assets/ironman_ver1.png" width="400"> | <img src="assets/ironman_ver2.png" width="400"> |
 
 The visualization tool provides an interactive 3D viewer where you can:
 - Inspect point clouds and camera poses
@@ -163,6 +163,10 @@ example/egoexo4D/videos/
 ```
 
 Each result is saved in a directory named after the input ViPE result (e.g., `vipe_results/joker` → `joker/ego_prior.mp4`).
+
+### Example of Ego Prior Rendering
+
+  <img src="assets/ironman_egoprior.png" width="400">
 
 ## 👀 Converting Depth Maps for EgoX Model
 
