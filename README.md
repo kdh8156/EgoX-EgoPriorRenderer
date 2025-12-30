@@ -193,6 +193,127 @@ This script will:
 - Use the visualization tools (`vipe visualize`) to preview results before running extensive rendering jobs
 - The rendering quality depends on the depth estimation quality from the original ViPE inference
 
+## 👀 EgoExo4D Training Data Preprocessing
+
+For pre-processing of EgoExo4D data for training EgoX, we provide a comprehensive preprocessing pipeline that automates ViPE inference and ego prior rendering for multiple takes.
+
+### Data Structure
+
+The preprocessing pipeline expects the following directory structure:
+
+```
+your_data_directory/
+├── takes/
+│   ├── take_name_1/
+│   │   └── frame_aligned_videos/
+│   │       └── downscaled/
+│   │           └── 448/
+│   │               ├── cam01.mp4
+│   │               ├── cam02.mp4
+│   │               └── ...
+│   └── take_name_2/
+│       └── ...
+├── annotations/
+│   └── ego_pose/
+│       └── test/
+│           └── camera_pose/
+│               ├── uuid_1.json
+│               ├── uuid_2.json
+│               └── ...
+└── captures.json
+```
+
+**Example Data**: See `data_preprocess/example/` for a minimal example of the required data structure with 3 sample takes.
+
+### Configuration
+
+1. **Edit the configuration file** (`data_preprocess/scripts/config.sh`):
+
+```bash
+# Paths
+WORKING_DIR="/path/to/your/output/directory"  # Output directory
+DATA_DIR="/path/to/your/egoexo4d/data"        # Input data directory (read-only)
+
+# Frame range
+START_FRAME=0
+END_FRAME=49  # Or auto-calculated: END_FRAME=$((START_FRAME + 49 - 1))
+
+# Rendering
+POINT_SIZE="5.0"
+
+# Multiprocessing
+BATCH_SIZE=6  # Number of parallel processes (recommended: 6-8)
+```
+
+2. **Key Configuration Parameters**:
+   - `WORKING_DIR`: Directory where all output files (ViPE results, rendered videos, metadata) will be saved
+   - `DATA_DIR`: Path to your EgoExo4D dataset directory containing `takes/`, `annotations/`, and `captures.json`
+   - `START_FRAME` / `END_FRAME`: Frame range to process (default: 0-48 for 49 frames)
+   - `BATCH_SIZE`: Number of takes to process in parallel
+
+### Running the Preprocessing Pipeline
+
+After configuring `config.sh`, run the batch processing script:
+
+```bash
+cd /path/to/EgoX-EgoPriorRenderer
+bash data_preprocess/scripts/infer_vipe_all_takes.sh
+```
+
+The script will:
+1. **Load all takes** from `DATA_DIR/takes/`
+2. **Run ViPE inference** for each camera in each take (using the `lyra` pipeline)
+3. **Generate `meta.json` files** automatically from `ego_pose` annotations
+4. **Render ego prior videos** for each camera
+5. **Select the best camera** based on rendering quality metrics
+6. **Save final results** to `WORKING_DIR/data/{START_FRAME}_{END_FRAME}/best_ego_view_rendering/`
+
+### Output Structure
+
+The preprocessing pipeline generates the following output structure:
+
+```
+WORKING_DIR/
+├── data/
+│   └── {START_FRAME}_{END_FRAME}/
+│       ├── best_ego_view_rendering/
+│       │   ├── take_name_1/
+│       │   │   ├── ego_Prior/
+│       │   │   │   └── ego_Prior.mp4
+│       │   │   ├── exo_GT/
+│       │   │   │   └── frame_*.png
+│       │   │   ├── ego_GT/
+│       │   │   │   └── frame_*.png
+│       │   │   └── metadata.json
+│       │   └── take_name_2/
+│       │       └── ...
+│       ├── vipe_results/
+│       │   └── take_name_1/
+│       │       └── camera_result_subdir/
+│       │           ├── pose/
+│       │           ├── rgb/
+│       │           ├── depth/
+│       │           └── ...
+│       └── meta_files/
+│           └── meta_take_name_result_subdir.json
+└── take_name_to_uuid_mapping.json
+```
+
+### Advanced Options
+
+You can also specify batch size via command-line arguments:
+
+```bash
+bash data_preprocess/scripts/infer_vipe_all_takes.sh --batch-size 8
+```
+
+### Notes
+
+- The script automatically creates a UUID mapping file (`take_name_to_uuid_mapping.json`) from `ego_pose` annotations if it doesn't exist
+- Processing can be resumed: the script skips takes that already have completed results in `best_ego_view_rendering/`
+- Error logs are saved to `WORKING_DIR/data/{START_FRAME}_{END_FRAME}/.error/` for debugging
+- The best camera selection is based on rendering quality metrics (frames with white pixels, total white pixels)
+
 ## 🙏 Acknowledgements
 
 This `EgoX`'s ego prior rendering codebase is built upon the `ViPE`(Video Pose Engine) project. We gratefully acknowledge their excellent work in video pose estimation and depth map generation. For more details, please visit the [ViPE](https://github.com/nv-tlabs/vipe) GitHub repository.
