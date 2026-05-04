@@ -52,15 +52,19 @@ class DefaultAnnotationPipeline(Pipeline):
         self.out_cfg = output
         self.assume_fixed_camera_pose = assume_fixed_camera_pose
         
-        # Parse intrinsics matrix from JSON string if provided
+        # Parse intrinsics matrix from JSON string or OmegaConf ListConfig
         if use_exo_intrinsic_gt is not None:
             import json
-            try:
-                self.use_exo_intrinsic_gt = json.loads(use_exo_intrinsic_gt)
-                logger.info(f"Parsed GT intrinsics matrix: {self.use_exo_intrinsic_gt}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse intrinsics matrix: {e}")
-                raise ValueError(f"Invalid intrinsics matrix format: {use_exo_intrinsic_gt}")
+            from omegaconf import OmegaConf, ListConfig
+            if isinstance(use_exo_intrinsic_gt, (list, ListConfig)):
+                self.use_exo_intrinsic_gt = OmegaConf.to_container(use_exo_intrinsic_gt) if isinstance(use_exo_intrinsic_gt, ListConfig) else use_exo_intrinsic_gt
+            else:
+                try:
+                    self.use_exo_intrinsic_gt = json.loads(use_exo_intrinsic_gt)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse intrinsics matrix: {e}")
+                    raise ValueError(f"Invalid intrinsics matrix format: {use_exo_intrinsic_gt}")
+            logger.info(f"Parsed GT intrinsics matrix: {self.use_exo_intrinsic_gt}")
         else:
             self.use_exo_intrinsic_gt = None
         

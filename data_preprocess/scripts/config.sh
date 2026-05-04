@@ -25,6 +25,9 @@ POINT_SIZE="5.0"
 # Multiprocessing
 BATCH_SIZE=3  # Number of parallel processes (recommended: 6-8)
 
+# GT Intrinsic
+USE_GT_INTRINSIC=true  # Use ground-truth camera intrinsics from ego_pose annotations
+
 # Advanced settings (usually no need to modify)
 UUID_MAPPING_FILE="${WORKING_DIR}/take_name_to_uuid_mapping.json"
 

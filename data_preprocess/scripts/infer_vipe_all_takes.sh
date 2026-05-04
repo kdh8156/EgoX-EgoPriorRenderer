@@ -1102,12 +1102,40 @@ run_inference() {
         return 1
     }
     
-    vipe infer "$temp_video_path" \
-        --start_frame $actual_start \
-        --end_frame $actual_end \
-        --assume_fixed_camera_pose \
-        --pipeline $pipeline \
-        --output "${VIPE_RESULTS_ROOT}/${take_name}"
+    # Extract GT intrinsics from ego_pose if USE_GT_INTRINSIC=true
+    local gt_intrinsic_arg=""
+    if [[ -n "${USE_GT_INTRINSIC:-}" ]] && [[ "$USE_GT_INTRINSIC" == "true" ]]; then
+        local ego_pose_file="${DATA_DIR}/annotations/ego_pose/test/camera_pose/${uuid}.json"
+        if [[ -f "$ego_pose_file" ]]; then
+            gt_intrinsic_arg=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+cam = sys.argv[2]
+if cam in d and 'camera_intrinsics' in d[cam]:
+    print(json.dumps(d[cam]['camera_intrinsics']))
+" "$ego_pose_file" "$camera" 2>/dev/null)
+            if [[ -n "$gt_intrinsic_arg" ]]; then
+                echo "Using GT exo intrinsic for ${camera}: ${gt_intrinsic_arg}"
+            fi
+        fi
+    fi
+
+    if [[ -n "$gt_intrinsic_arg" ]]; then
+        vipe infer "$temp_video_path" \
+            --start_frame $actual_start \
+            --end_frame $actual_end \
+            --assume_fixed_camera_pose \
+            --pipeline $pipeline \
+            --use_exo_intrinsic_gt "$gt_intrinsic_arg" \
+            --output "${VIPE_RESULTS_ROOT}/${take_name}"
+    else
+        vipe infer "$temp_video_path" \
+            --start_frame $actual_start \
+            --end_frame $actual_end \
+            --assume_fixed_camera_pose \
+            --pipeline $pipeline \
+            --output "${VIPE_RESULTS_ROOT}/${take_name}"
+    fi
     
     if [[ -d "${VIPE_RESULTS_ROOT}/${take_name}/${camera}" ]]; then
         :
